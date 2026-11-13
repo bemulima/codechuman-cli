@@ -180,7 +180,9 @@ func (g GitCloner) Clone(ctx context.Context, repoURL, target string) error {
 	if bin == "" {
 		bin = "git"
 	}
-	cmd := exec.CommandContext(ctx, bin, "clone", "--depth", "1", "--no-tags", "--", repoURL, target)
+	// A pinned starter snapshot has one commit. Read-only dumb Git HTTP does not
+	// support shallow negotiation, so --depth would make every clone fail.
+	cmd := exec.CommandContext(ctx, bin, "clone", "--no-tags", "--", repoURL, target)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if g.BearerToken != "" {
 		remote, err := url.Parse(repoURL)
