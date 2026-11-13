@@ -28,12 +28,25 @@ Evidence: [Sandbox routes](https://github.com/bemulima/ms-go-sandbox/blob/main/i
    lesson, idempotently start or reuse TaskInstance/Sandbox, pin the Course/task
    revision, return an **authorized** `codechuman.checkout.v1` manifest.
    Never accept arbitrary student IDs or provider credentials from the body.
+   Client adapter introduced in IDE28-02 proposes:
+
+   - `POST /api/v1/ide/checkouts` (student JWT, no client-supplied student ID).
+   - Request: `{"schema":"codechuman.checkout-request.v1","task_instance_id":"<UUID>"}`.
+   - Response (200 reused / 201 created): exact `codechuman.checkout.v1`
+     specification with a **same-origin**
+     `/api/v1/ide/git/exports/<opaque-id>.git` `clone_url`.
+   - A foreign, stale or unready TaskInstance must fail closed. The request
+     never generates new public Course material; follow existing access
+     and Practice Start rules first.
 2. **Sandbox read-only Git HTTPS export** for the **starter snapshot only**:
    owner-check TaskInstance/Sandbox, exclude secrets and hidden validation
    files, produce a bounded immutable bare Git export, allow `git-upload-pack`
    but **reject `git-receive-pack` / pushes**. Use a short-lived scoped
    credential via an approved credential helper, not embedded URL userinfo,
-   query tokens or command-line arguments. Expiry, cleanup, concurrency and
+   query tokens or command-line arguments. The initial CLI adapter uses a
+   temporary, URL-scoped Git environment header and disables HTTP redirects,
+   interactive prompts and credential helpers; the Gateway must validate
+   the same student bearer on every Git HTTP request. Expiry, cleanup, concurrency and
    rate limits need tests.
 3. **Sync adapter using existing file APIs**: watch saved code changes on each
    client; debounce and batch per workspace, ignore `.git/` and `.learning/`,

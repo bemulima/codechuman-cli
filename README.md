@@ -22,6 +22,10 @@ go build -o codechuman ./cmd/codechuman
 
 ./codechuman doctor
 ./codechuman checkout --spec /path/to/authorized-checkout.json
+# IDE28-02 source-only; requires the planned gateway contract:
+# printf '%s' "$CODECHUMAN_DEMO_ACCESS_TOKEN" | \
+#   ./codechuman checkout-remote --api-base https://YOUR-CODECHUMAN-HOST \
+#     --task-instance 00000000-0000-4000-8000-000000000028 --token-stdin
 ./codechuman list
 ./codechuman validate-js --workspace ~/.codechuman/js-beginner/01 --file app.js
 ./codechuman validate-public-js --workspace ~/.codechuman/js-beginner/01
@@ -56,14 +60,30 @@ connected flow. In this slice the CLI loads a local JSON file for deterministic
 testing; authenticated fetching and credential helpers are a **future integration**.
 The example URL is illustrative, not an already deployed endpoint.
 
+### IDE28-02 remote checkout adapter (source-only)
+
+`checkout-remote` is implemented for an exact proposed
+`POST /api/v1/ide/checkouts` contract. It retrieves a revision-pinned
+checkout manifest using an **ephemeral access token from a pipe**, enforces
+same-origin Git HTTPS export URLs and invokes Git with a temporary,
+path-scoped Authorization header through environment config. The token
+never appears in Git argv, clone URL, saved manifest or `.git/config`.
+It rejects HTTP origins and cross-origin redirects.
+
+**The server endpoint, Git export transport, and native account sign-in do not
+exist yet**; the command is useful with a controlled contract fixture only.
+Never put a real access token into a shell command literal or history. Native
+IDE clients will supply tokens through their secret storage/secure session
+handoff in a later stage.
+
 **Local safety:** Only run public test code from a trusted publisher. These tests
 run as your OS user and can execute arbitrary JavaScript; they are not isolated
 by Docker or the platform Sandbox. They are never official graded evidence.
 
-**Not yet implemented:** live Course/Student fetching, authenticated Git HTTP
-export in Sandbox, WebSocket file sync and revision ACKs, official Practice
-Submit, Dialog/Teacher and AI provider execution. A local `PASS` never grants
-Mastery.
+**Not yet implemented:** live Course/Student fetching and native login,
+authenticated Git HTTP export in Sandbox, WebSocket file sync and revision ACKs,
+official Practice Submit, Dialog/Teacher and AI provider execution. A local
+`PASS` never grants Mastery.
 
 No open-source license has been selected yet for this public repository.
 

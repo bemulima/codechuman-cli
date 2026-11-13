@@ -171,7 +171,8 @@ type Cloner interface {
 }
 
 type GitCloner struct {
-	Binary string
+	Binary      string
+	BearerToken string // Ephemeral remote-checkout credential, never persisted.
 }
 
 func (g GitCloner) Clone(ctx context.Context, repoURL, target string) error {
@@ -181,6 +182,38 @@ func (g GitCloner) Clone(ctx context.Context, repoURL, target string) error {
 	}
 	cmd := exec.CommandContext(ctx, bin, "clone", "--depth", "1", "--no-tags", "--", repoURL, target)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	if g.BearerToken != "" {
+		remote, err := url.Parse(repoURL)
+		if err != nil || remote.Scheme != "https" || remote.Hostname() == "" ||
+			remote.User != nil || remote.RawQuery != "" || remote.Fragment != "" ||
+			!strings.HasPrefix(remote.Path, gitExportRoutePrefix) || !strings.HasSuffix(remote.Path, ".git") {
+			return errors.New("invalid authenticated Git HTTPS export URL")
+		}
+		if len(g.BearerToken) > 8192 || strings.ContainsAny(g.BearerToken, "\r\n\x00\t ") {
+			return errors.New("invalid Git HTTPS bearer token")
+		}
+		// Pass the scoped HTTP header through Git's environment configuration,
+		// never through argv, remote URL, persistent .git/config or logs.
+		// Git traces, credential helpers, prompts and redirects are disabled.
+		filtered := make([]string, 0, len(cmd.Env)+9)
+		for _, item := range cmd.Env {
+			key, _, _ := strings.Cut(item, "=")
+			if strings.HasPrefix(key, "GIT_CONFIG_") || strings.HasPrefix(key, "GIT_TRACE") ||
+				key == "GIT_CURL_VERBOSE" || key == "GIT_ASKPASS" || key == "SSH_ASKPASS" {
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		cmd.Env = append(filtered,
+			"GIT_CONFIG_COUNT=3",
+			"GIT_CONFIG_KEY_0=http.followRedirects",
+			"GIT_CONFIG_VALUE_0=false",
+			"GIT_CONFIG_KEY_1=http."+repoURL+".extraHeader",
+			"GIT_CONFIG_VALUE_1=Authorization: Bearer "+g.BearerToken,
+			"GIT_CONFIG_KEY_2=credential.helper",
+			"GIT_CONFIG_VALUE_2=",
+			"GIT_ASKPASS=", "SSH_ASKPASS=")
+	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// Git can include sensitive helper output; do not persist or surface it.
