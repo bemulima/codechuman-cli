@@ -66,3 +66,7 @@ Submit, Dialog/Teacher and AI provider execution. A local `PASS` never grants
 Mastery.
 
 No open-source license has been selected yet for this public repository.
+
+The [server integration map](docs/server-integration-map.md) identifies existing
+Sandbox/Practice/Teacher endpoints to reuse and the smallest missing owner
+contracts. It also records the current Teacher code-context gap.
