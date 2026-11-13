@@ -207,8 +207,18 @@ func Checkout(ctx context.Context, root string, spec Spec, cloner Cloner) (Resul
 		return Result{}, err
 	}
 	courseDir := filepath.Join(root, spec.CourseSlug)
+	if info, err := os.Lstat(courseDir); err == nil {
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return Result{}, ErrTargetOccupied
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Result{}, err
+	}
 	if err := os.MkdirAll(courseDir, 0o700); err != nil {
 		return Result{}, err
+	}
+	if info, err := os.Lstat(courseDir); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return Result{}, ErrTargetOccupied
 	}
 	lessonName := fmt.Sprintf("%02d", spec.LessonNumber)
 	lockPath := filepath.Join(courseDir, "."+lessonName+".checkout.lock")

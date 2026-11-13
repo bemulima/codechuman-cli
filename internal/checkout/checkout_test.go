@@ -149,6 +149,19 @@ func TestCheckoutRejectsSymlinkedExistingDirectory(t *testing.T) {
 	}
 }
 
+func TestCheckoutRejectsSymlinkedCourseDirectory(t *testing.T) {
+	root := t.TempDir()
+	foreign := t.TempDir()
+	if err := os.Symlink(foreign, filepath.Join(root, "js-beginner")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	cloner := &stubCloner{}
+	_, err := Checkout(context.Background(), root, specimen(), cloner)
+	if !errors.Is(err, ErrTargetOccupied) || cloner.calls != 0 {
+		t.Fatalf("expected course symlink refusal, got %v (clones %d)", err, cloner.calls)
+	}
+}
+
 func TestWorkspaceRootRejectsPathsCanonicalizingToFilesystemRoot(t *testing.T) {
 	root := string(filepath.Separator)
 	for _, path := range []string{root, filepath.Join(root, "tmp", "..") + string(filepath.Separator)} {
