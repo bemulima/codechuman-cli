@@ -18,11 +18,11 @@ import (
 const schemaVersion = "codechuman.checkout.v1"
 
 var (
-	ErrRevisionConflict  = errors.New("checkout revision does not match the local workspace")
-	ErrTargetOccupied    = errors.New("checkout directory already exists without a matching manifest")
+	ErrRevisionConflict   = errors.New("checkout revision does not match the local workspace")
+	ErrTargetOccupied     = errors.New("checkout directory already exists without a matching manifest")
 	ErrCheckoutInProgress = errors.New("checkout for this lesson is already in progress")
-	ErrReservedPath      = errors.New("repository contains a reserved .learning path")
-	safeSlug             = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$`)
+	ErrReservedPath       = errors.New("repository contains a reserved .learning path")
+	safeSlug              = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$`)
 )
 
 // Material is a public Course-owned lesson asset. Private tests and answers
@@ -180,7 +180,9 @@ func (g GitCloner) Clone(ctx context.Context, repoURL, target string) error {
 	if bin == "" {
 		bin = "git"
 	}
-	cmd := exec.CommandContext(ctx, bin, "clone", "--depth", "1", "--no-tags", "--", repoURL, target)
+	// A pinned starter snapshot has one commit. Read-only dumb Git HTTP does not
+	// support shallow negotiation, so --depth would make every clone fail.
+	cmd := exec.CommandContext(ctx, bin, "clone", "--no-tags", "--", repoURL, target)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if g.BearerToken != "" {
 		remote, err := url.Parse(repoURL)
