@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net/http"
 	"net/url"
@@ -15,16 +16,31 @@ import (
 )
 
 const (
-	checkoutRequestSchema = "codechuman.checkout-request.v1"
-	checkoutRoute         = "/api/v1/ide/checkouts"
-	gitExportRoutePrefix  = "/api/v1/ide/git/exports/"
+	checkoutRoute        = "/api/v1/ide/checkouts"
+	gitExportRoutePrefix = "/api/v1/ide/git/exports/"
+	maxDescriptorBytes   = 16 << 10
 )
 
 var canonicalTaskID = regexp.MustCompile("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
 
-// ResolveRemote obtains the pinned checkout instructions from a trusted,
-// same-origin Codechuman gateway. The endpoint is a NEW, proposed server
-// contract and is not yet deployed. No token is written to disk or the URL.
+// The live Practice descriptor deliberately provides a relative Git URL and
+// identity fields only. Course materials must be fetched via their own
+// authorized owner contract, never assumed to be part of this response.
+type remoteDescriptor struct {
+	Schema         string `json:"schema"`
+	CourseID       string `json:"course_id"`
+	CourseSlug     string `json:"course_slug"`
+	LessonID       string `json:"lesson_id"`
+	LessonNumber   int    `json:"lesson_number"`
+	LessonRevision string `json:"lesson_revision"`
+	TaskInstanceID string `json:"task_instance_id"`
+	SandboxID      string `json:"sandbox_id"`
+	GitURL         string `json:"git_url"`
+}
+
+// ResolveRemote obtains the owner-verified checkout descriptor from the
+// authenticated Gateway route. The caller supplies only a TaskInstance ID.
+// The bearer never enters a URL, a serialized manifest, or local storage.
 func ResolveRemote(ctx context.Context, client *http.Client, baseURL, bearerToken, taskInstanceID string) (Spec, error) {
 	base, err := url.Parse(baseURL)
 	if err != nil || base.Scheme != "https" || base.Hostname() == "" ||
@@ -41,9 +57,8 @@ func ResolveRemote(ctx context.Context, client *http.Client, baseURL, bearerToke
 		return Spec{}, errors.New("invalid bearer token")
 	}
 	requestJSON, err := json.Marshal(struct {
-		Schema         string `json:"schema"`
 		TaskInstanceID string `json:"task_instance_id"`
-	}{checkoutRequestSchema, taskInstanceID})
+	}{taskInstanceID})
 	if err != nil {
 		return Spec{}, err
 	}
@@ -72,26 +87,53 @@ func ResolveRemote(ctx context.Context, client *http.Client, baseURL, bearerToke
 		return Spec{}, fmt.Errorf("checkout resolver request failed: %w", err)
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated {
+	if response.StatusCode != http.StatusOK {
 		return Spec{}, fmt.Errorf("checkout resolver returned HTTP %d", response.StatusCode)
 	}
 	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
 		return Spec{}, errors.New("checkout resolver returned a non-JSON response")
 	}
-	spec, err := ReadSpec(response.Body)
-	if err != nil {
-		return Spec{}, fmt.Errorf("invalid server checkout specification: %w", err)
+	if !strings.Contains(strings.ToLower(response.Header.Get("Cache-Control")), "no-store") {
+		return Spec{}, errors.New("checkout resolver must disable caching")
 	}
-	if spec.TaskInstanceID != taskInstanceID {
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxDescriptorBytes+1))
+	if err != nil || len(body) == 0 || len(body) > maxDescriptorBytes {
+		return Spec{}, errors.New("checkout descriptor is unavailable or oversized")
+	}
+	var descriptor remoteDescriptor
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&descriptor); err != nil {
+		return Spec{}, fmt.Errorf("invalid checkout descriptor: %w", err)
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return Spec{}, errors.New("checkout descriptor must contain exactly one JSON object")
+	}
+	if descriptor.Schema != schemaVersion || descriptor.TaskInstanceID != taskInstanceID {
 		return Spec{}, errors.New("checkout TaskInstance binding differs from request")
 	}
-	gitURL, err := url.Parse(spec.CloneURL)
-	if err != nil || gitURL.Scheme != base.Scheme ||
-		!strings.EqualFold(gitURL.Host, base.Host) ||
-		!strings.HasPrefix(gitURL.Path, gitExportRoutePrefix) ||
-		!strings.HasSuffix(gitURL.Path, ".git") {
-		return Spec{}, errors.New("checkout Git HTTPS URL must use the authorized gateway origin and export route")
+	if descriptor.GitURL != gitExportRoutePrefix+taskInstanceID+".git" {
+		return Spec{}, errors.New("checkout Git URL must be the exact TaskInstance export path")
+	}
+	for _, id := range []string{descriptor.CourseID, descriptor.LessonID, descriptor.LessonRevision, descriptor.SandboxID} {
+		if !canonicalTaskID.MatchString(id) {
+			return Spec{}, errors.New("checkout descriptor contains an invalid owner identity")
+		}
+	}
+	spec := Spec{
+		Schema:         descriptor.Schema,
+		CourseID:       descriptor.CourseID,
+		CourseSlug:     descriptor.CourseSlug,
+		LessonID:       descriptor.LessonID,
+		LessonNumber:   descriptor.LessonNumber,
+		LessonRevision: descriptor.LessonRevision,
+		TaskInstanceID: descriptor.TaskInstanceID,
+		SandboxID:      descriptor.SandboxID,
+		CloneURL:       origin + descriptor.GitURL,
+	}
+	if err := spec.Validate(); err != nil {
+		return Spec{}, fmt.Errorf("invalid checkout descriptor: %w", err)
 	}
 	return spec, nil
 }

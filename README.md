@@ -1,8 +1,10 @@
 # Codechuman CLI
 
 Go-based shared local runtime for [Codechuman IDE #28](https://github.com/bemulima/learning-platform-business/issues/28).
-Used by both VS Code and Neovim. **This is a partial source implementation,
-not a finished connected Codechuman client.**
+Intended for both VS Code and Neovim. **This is a partial client:** the P0
+owner-authenticated checkout and immutable Git-read backend are merged, but
+client sign-in, lesson material retrieval, and full IDE orchestration remain
+separate work.
 
 ## Implemented
 
@@ -22,10 +24,11 @@ go build -o codechuman ./cmd/codechuman
 
 ./codechuman doctor
 ./codechuman checkout --spec /path/to/authorized-checkout.json
-# IDE28-02 source-only; requires the planned gateway contract:
-# printf '%s' "$CODECHUMAN_DEMO_ACCESS_TOKEN" | \
-#   ./codechuman checkout-remote --api-base https://YOUR-CODECHUMAN-HOST \
-#     --task-instance 00000000-0000-4000-8000-000000000028 --token-stdin
+# Use a short-lived Student access token supplied by the authenticated IDE
+# session over stdin, never as a command-line argument or embedded Git URL.
+# <secure-token-provider> | ./codechuman checkout-remote \
+#   --api-base https://YOUR-CODECHUMAN-HOST \
+#   --task-instance 00000000-0000-4000-8000-000000000028 --token-stdin
 ./codechuman list
 ./codechuman validate-js --workspace ~/.codechuman/js-beginner/01 --file app.js
 ./codechuman validate-public-js --workspace ~/.codechuman/js-beginner/01
@@ -34,7 +37,7 @@ go build -o codechuman ./cmd/codechuman
 The root defaults to `~/.codechuman` and can be overridden with
 `CODECHUMAN_WORKSPACE_ROOT` or `--root`. Each lesson has a standalone `.git`.
 
-## Checkout JSON contract (draft)
+## Local checkout JSON contract
 
 ```json
 {
@@ -46,7 +49,7 @@ The root defaults to `~/.codechuman` and can be overridden with
   "lesson_revision": "rev-789",
   "task_instance_id": "task-123",
   "sandbox_id": "sandbox-456",
-  "clone_url": "https://YOUR-CODECHUMAN-HOST/api/v1/sandbox/git/exports/exp-123.git",
+  "clone_url": "https://YOUR-CODECHUMAN-HOST/api/v1/ide/git/exports/00000000-0000-4000-8000-000000000028.git",
   "materials": [
     { "path": "lesson.md", "body": "# JavaScript Variables\n" },
     { "path": "examples/basic.md", "body": "const x = 1;\n" },
@@ -55,33 +58,45 @@ The root defaults to `~/.codechuman` and can be overridden with
 }
 ```
 
-Only a server-authorized and owner-bound checkout spec may be used in the final
-connected flow. In this slice the CLI loads a local JSON file for deterministic
-testing; authenticated fetching and credential helpers are a **future integration**.
-The example URL is illustrative, not an already deployed endpoint.
+`checkout --spec` is retained for local deterministic testing with a previously
+authorized manifest and optional public lesson materials. It must not be used
+as a way to bypass server authorization for private practice. The example URL
+is illustrative, not an activated deployment.
 
-### IDE28-02 remote checkout adapter (source-only)
+### Authenticated remote checkout (IDE28 P0)
 
-`checkout-remote` is implemented for an exact proposed
-`POST /api/v1/ide/checkouts` contract. It retrieves a revision-pinned
-checkout manifest using an **ephemeral access token from a pipe**, enforces
-same-origin Git HTTPS export URLs and invokes Git with a temporary,
-path-scoped Authorization header through environment config. The token
-never appears in Git argv, clone URL, saved manifest or `.git/config`.
-It rejects HTTP origins and cross-origin redirects.
+`checkout-remote` calls the now-implemented, default-off
+`POST /api/v1/ide/checkouts` Gateway endpoint using an **ephemeral Student
+access token from a pipe**. The request contains only
+`{"task_instance_id":"<UUID>"}`. Practice returns a bounded
+`codechuman.checkout.v1` descriptor with an exact **relative**
+`git_url: "/api/v1/ide/git/exports/<TaskInstance UUID>.git"`.
 
-**The server endpoint, Git export transport, and native account sign-in do not
-exist yet**; the command is useful with a controlled contract fixture only.
-Never put a real access token into a shell command literal or history. Native
-IDE clients will supply tokens through their secret storage/secure session
-handoff in a later stage.
+CLI validates the bounded owner ID formats, exact TaskInstance Git path,
+schema and same-origin HTTPS transport (the server verifies actual ownership),
+then runs native Git with an ephemeral
+path-scoped Authorization header. The token never appears in Git argv, clone
+URL, saved manifest or `.git/config`. HTTP, redirects, stale/foreign TaskInstance
+identities and unexpected descriptor fields fail closed. The Git transport is
+read-only and is owned by Practice Runtime, not Sandbox Git push.
+
+The remote descriptor contains **no lesson.md, examples, quiz or public tests**.
+Those materials require a separate authorized Course read, so
+`checkout-remote` currently creates the pinned starter and identity manifest
+only. Local validation of already available public source still works offline.
+
+The backend P0 flow passed isolated runtime acceptance before being merged;
+deployment/activation and a real CLI-command checkout against the full
+installed local stack are not yet accepted. Native IDE clients must supply
+tokens through secret storage/secure session handoff in a subsequent stage.
+Never put a real access token into shell history or a command literal.
 
 **Local safety:** Only run public test code from a trusted publisher. These tests
 run as your OS user and can execute arbitrary JavaScript; they are not isolated
 by Docker or the platform Sandbox. They are never official graded evidence.
 
-**Not yet implemented:** live Course/Student fetching and native login,
-authenticated Git HTTP export in Sandbox, WebSocket file sync and revision ACKs,
+**Not yet implemented:** live lesson/material fetching and native login,
+WebSocket file sync and revision ACKs,
 official Practice Submit, Dialog/Teacher and AI provider execution. A local
 `PASS` never grants Mastery.
 

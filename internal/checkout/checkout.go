@@ -201,12 +201,14 @@ func (g GitCloner) Clone(ctx context.Context, repoURL, target string) error {
 		for _, item := range cmd.Env {
 			key, _, _ := strings.Cut(item, "=")
 			if strings.HasPrefix(key, "GIT_CONFIG_") || strings.HasPrefix(key, "GIT_TRACE") ||
-				key == "GIT_CURL_VERBOSE" || key == "GIT_ASKPASS" || key == "SSH_ASKPASS" {
+				key == "GIT_CURL_VERBOSE" || key == "GIT_SSL_NO_VERIFY" ||
+				key == "GIT_ASKPASS" || key == "SSH_ASKPASS" {
 				continue
 			}
 			filtered = append(filtered, item)
 		}
 		cmd.Env = append(filtered,
+			"GIT_SSL_NO_VERIFY=0",
 			"GIT_CONFIG_COUNT=3",
 			"GIT_CONFIG_KEY_0=http.followRedirects",
 			"GIT_CONFIG_VALUE_0=false",
