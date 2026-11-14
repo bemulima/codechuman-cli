@@ -13,6 +13,7 @@ func TestAuthenticatedGitCloneUsesScopedEnvironmentNotURLOrArguments(t *testing.
 		t.Skip("POSIX fake Git helper test")
 	}
 	root := t.TempDir()
+	t.Setenv("GIT_SSL_NO_VERIFY", "true") // Must not weaken authenticated clone TLS.
 	bin := filepath.Join(root, "fake-git")
 	// A fake Git binary checks its environment without printing the bearer.
 	contents := `#!/bin/sh
@@ -20,6 +21,7 @@ if [ "$GIT_CONFIG_COUNT" != "3" ]; then exit 4; fi
 if [ "$GIT_CONFIG_VALUE_0" != "false" ]; then exit 5; fi
 if [ "$GIT_CONFIG_VALUE_1" != "Authorization: Bearer test.jwt.token" ]; then exit 6; fi
 if [ "$GIT_CONFIG_VALUE_2" != "" ]; then exit 7; fi
+if [ "$GIT_SSL_NO_VERIFY" != "0" ]; then exit 11; fi
 case "$*" in *test.jwt.token*) exit 8 ;; esac
 case "$*" in *--depth*) exit 10 ;; esac
 mkdir -p "$5/.git/info" || exit 9

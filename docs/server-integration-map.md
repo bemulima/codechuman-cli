@@ -1,8 +1,9 @@
-# IDE #28 — checked server integration map (2026-11-13)
+# IDE #28 — server integration map (updated 2026-11-14)
 
-This is a **read-only inspection of existing server main branches**, not a
-claim that the IDE currently authenticates or calls these endpoints. Confirm
-Gateway routing and policies before using them from untrusted IDE clients.
+The owner-authenticated Practice Git starter P0 path and descriptor endpoint
+have been merged to main, but remain **feature-flagged off until a controlled
+activation**. The remaining sync, Teacher and full Course UI work below is not
+implied by that acceptance.
 
 ## Reuse existing endpoints and owners
 
@@ -21,33 +22,29 @@ Evidence: [Sandbox routes](https://github.com/bemulima/ms-go-sandbox/blob/main/i
 [Practice routes](https://github.com/bemulima/ms-go-practice-runtime/blob/main/internal/transport/http/server.go),
 [Teacher contract](https://github.com/bemulima/ms-go-teacher-agent/blob/main/docs/http-contract.md).
 
-## Actual missing contracts (small, separate owner slices)
+## Owner contracts and remaining integration work
 
-1. **Trusted IDE session/checkout resolution** at the Gateway/Practice boundary:
-   authenticate the student, require active Course access, resolve an available
-   lesson, idempotently start or reuse TaskInstance/Sandbox, pin the Course/task
-   revision, return an **authorized** `codechuman.checkout.v1` manifest.
-   Never accept arbitrary student IDs or provider credentials from the body.
-   Client adapter introduced in IDE28-02 proposes:
+1. **Merged P0 descriptor for an already provisioned TaskInstance**:
+   Gateway authenticates the Student and Practice verifies persisted TaskInstance
+   ownership, Student's current path/assignment and Course immutable placement.
+   It does **not** create or start a new instance; callers must use the existing
+   authorized Start flow first. Never accept arbitrary student IDs or provider
+   credentials from the body. The exact owner contract is:
 
    - `POST /api/v1/ide/checkouts` (student JWT, no client-supplied student ID).
-   - Request: `{"schema":"codechuman.checkout-request.v1","task_instance_id":"<UUID>"}`.
-   - Response (200 reused / 201 created): exact `codechuman.checkout.v1`
-     specification with a **same-origin**
-     `/api/v1/ide/git/exports/<opaque-id>.git` `clone_url`.
-   - A foreign, stale or unready TaskInstance must fail closed. The request
-     never generates new public Course material; follow existing access
-     and Practice Start rules first.
-2. **Sandbox read-only Git HTTPS export** for the **starter snapshot only**:
-   owner-check TaskInstance/Sandbox, exclude secrets and hidden validation
-   files, produce a bounded immutable bare Git export, allow `git-upload-pack`
-   but **reject `git-receive-pack` / pushes**. Use a short-lived scoped
-   credential via an approved credential helper, not embedded URL userinfo,
-   query tokens or command-line arguments. The initial CLI adapter uses a
-   temporary, URL-scoped Git environment header and disables HTTP redirects,
-   interactive prompts and credential helpers; the Gateway must validate
-   the same student bearer on every Git HTTP request. Expiry, cleanup, concurrency and
-   rate limits need tests.
+   - Request: `{"task_instance_id":"<UUID>"}` with no other fields.
+   - Response: HTTP 200, `codechuman.checkout.v1` with exact Course/Lesson,
+     Sandbox/TaskInstance identity and **relative**
+     `git_url: "/api/v1/ide/git/exports/<TaskInstance UUID>.git"`.
+   - Lesson content is not included. A foreign, stale or unready TaskInstance
+     fails closed; Course material and Task Start remain separate owner flows.
+2. **Merged Practice-owned read-only dumb Git HTTPS export** of the immutable
+   starter snapshot (including pinned Catalog/FileStorage ZIP). Gateway repeats
+   Student authentication for each resource; Practice checks owner TaskInstance;
+   hidden validation assets and mutable Sandbox files are never exported.
+   Git push, receive-pack and shallow transport remain unsupported. The CLI
+   scopes its ephemeral bearer to the exact HTTPS Git URL via environment, not
+   URL userinfo, query tokens, argv, Git config or credential helpers.
 3. **Sync adapter using existing file APIs**: watch saved code changes on each
    client; debounce and batch per workspace, ignore `.git/` and `.learning/`,
    limit paths/bytes, handle HTTP auth and server errors. Record the latest
