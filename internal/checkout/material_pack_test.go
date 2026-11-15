@@ -72,8 +72,7 @@ func TestResolveRemoteMaterialsUsesPinnedHTTPSAndChecksums(t *testing.T) {
 		t.Fatalf("authorized material pack rejected: %v", err)
 	}
 	if requests != 1 || len(files) != 4 || files[0].Path != "lesson.md" ||
-		files[1].Body != "Implement answer().
-" {
+		files[1].Body != "Implement answer().\n" {
 		t.Fatalf("unexpected files: %#v (requests=%d)", files, requests)
 	}
 }
