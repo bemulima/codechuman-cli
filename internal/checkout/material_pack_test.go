@@ -85,10 +85,18 @@ func TestResolveRemoteMaterialsRejectsTamperingAndSecretQuiz(t *testing.T) {
 		{"wrong TaskInstance", func(v *remoteMaterialsBundle) { v.TaskInstanceID = "11111111-1111-4111-8111-111111111111" }},
 		{"wrong lesson revision", func(v *remoteMaterialsBundle) { v.LessonRevision = "cccccccc-cccc-4ccc-8ccc-cccccccccccc" }},
 		{"checksum mismatch", func(v *remoteMaterialsBundle) { v.Files[0].Body += "tampered" }},
-		{"private test", func(v *remoteMaterialsBundle) { v.Files = append(v.Files, publicMaterialFile("tests/private/hidden.js", "private")) }},
-		{"traversal", func(v *remoteMaterialsBundle) { v.Files = append(v.Files, publicMaterialFile("../secret.txt", "private")) }},
-		{"duplicate casefold path", func(v *remoteMaterialsBundle) { v.Files = append(v.Files, publicMaterialFile("examples/FIRST.js", "duplicate")) }},
-		{"oversized file", func(v *remoteMaterialsBundle) { v.Files = append(v.Files, publicMaterialFile("examples/huge.js", strings.Repeat("x", 513*1024))) }},
+		{"private test", func(v *remoteMaterialsBundle) {
+			v.Files = append(v.Files, publicMaterialFile("tests/private/hidden.js", "private"))
+		}},
+		{"traversal", func(v *remoteMaterialsBundle) {
+			v.Files = append(v.Files, publicMaterialFile("../secret.txt", "private"))
+		}},
+		{"duplicate casefold path", func(v *remoteMaterialsBundle) {
+			v.Files = append(v.Files, publicMaterialFile("examples/FIRST.js", "duplicate"))
+		}},
+		{"oversized file", func(v *remoteMaterialsBundle) {
+			v.Files = append(v.Files, publicMaterialFile("examples/huge.js", strings.Repeat("x", 513*1024)))
+		}},
 		{"no lesson", func(v *remoteMaterialsBundle) { v.Files = v.Files[1:] }},
 		{"quiz answer key", func(v *remoteMaterialsBundle) {
 			v.Files[3] = publicMaterialFile("quiz.json", `{"schema":"codechuman.quiz-view.v1","title":"Quiz","questions":[{"key":"q1","prompt":"What?","choices":[{"key":"a","text":"A"},{"key":"b","text":"B"}],"correct_choice_key":"a"}]}`)
