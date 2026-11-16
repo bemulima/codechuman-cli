@@ -27,7 +27,11 @@ func main() {
 }
 
 func run(args []string) error {
-	return runWithRemoteClient(args, nil)
+	client, err := configuredRemoteClient()
+	if err != nil {
+		return err
+	}
+	return runWithRemoteClient(args, client)
 }
 
 func runWithRemoteClient(args []string, remoteClient *http.Client) error {

@@ -116,3 +116,12 @@ No open-source license has been selected yet for this public repository.
 The [server integration map](docs/server-integration-map.md) identifies existing
 Sandbox/Practice/Teacher endpoints to reuse and the smallest missing owner
 contracts. It also records the current Teacher code-context gap.
+
+### Process-local private CA (including native macOS)
+
+For an isolated test Gateway, set `CODECHUMAN_CA_FILE` to an operator-provided
+PEM CA bundle. CLI adds that bundle to the process's system roots; hostname and
+certificate verification remain mandatory. Invalid bundles fail closed. Set
+`GIT_SSL_CAINFO` to the same PEM path for native Git. Neither setting modifies
+the macOS trust store. Configure these only in your own launcher/environment,
+never from a cloned lesson or an untrusted project.
