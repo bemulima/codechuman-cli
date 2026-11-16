@@ -125,3 +125,23 @@ certificate verification remain mandatory. Invalid bundles fail closed. Set
 `GIT_SSL_CAINFO` to the same PEM path for native Git. Neither setting modifies
 the macOS trust store. Configure these only in your own launcher/environment,
 never from a cloned lesson or an untrusted project.
+
+### Task-scoped Teacher chat (IDE28)
+
+`teacher-chat --api-base https://YOUR-GATEWAY --workspace /path/to/checkout
+--request-stdin` reads a bounded JSON request from stdin with `token`, optional
+`body`, and `idempotency_key` (UUID required when sending). Never place the token
+or private message text in argv. The client first reads the actual Student-owned
+Runtime TaskInstance, derives its LearningAction from that owner response,
+ensures the `practice_task` Teacher conversation, and reads/posts through
+canonical Dialog. It does not save credentials or a duplicate transcript.
+
+The result contains `dialog_id`, `task_instance_id`, `messages`, and `pending`.
+A pending reply must be refreshed, not blindly resent. Reusing the same message
+idempotency key is required after an ambiguous POST. HTTP errors never include
+response bodies or the token. Redirects are forbidden and bodies are bounded.
+
+Teacher uses server-owned task/step and assistance policy. Unsynced local code
+is not uploaded or treated as official Sandbox state. Real response generation
+requires the approved confidential AI Prompt provider; an unavailable provider
+must not be replaced with a fabricated answer. Dialog owns all history.
