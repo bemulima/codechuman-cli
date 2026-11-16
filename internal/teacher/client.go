@@ -22,9 +22,10 @@ import (
 var uuid = regexp.MustCompile(`^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$`)
 
 type Request struct {
-	Token string `json:"token"`
-	Body  string `json:"body"`
-	Key   string `json:"idempotency_key"`
+	SyncMain bool   `json:"sync_main"`
+	Token    string `json:"token"`
+	Body     string `json:"body"`
+	Key      string `json:"idempotency_key"`
 }
 type Message struct {
 	ID     string  `json:"id"`
@@ -44,6 +45,9 @@ type client struct {
 }
 
 func (c client) call(ctx context.Context, method, path string, payload any, out any) error {
+	return c.callHeaders(ctx, method, path, payload, out, nil)
+}
+func (c client) callHeaders(ctx context.Context, method, path string, payload any, out any, headers map[string]string) error {
 	var b bytes.Buffer
 	if payload != nil {
 		if e := json.NewEncoder(&b).Encode(payload); e != nil {
@@ -56,6 +60,9 @@ func (c client) call(ctx context.Context, method, path string, payload any, out 
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -132,9 +139,14 @@ func Chat(ctx context.Context, h *http.Client, origin, workspace string, input R
 	// Runtime rechecks actual Student ownership. No identity/action comes from local config.
 	var envelope struct {
 		Instance struct {
-			ID     string `json:"id"`
-			Action string `json:"learning_action_id"`
-			Status string `json:"status"`
+			ID        string `json:"id"`
+			Action    string `json:"learning_action_id"`
+			Status    string `json:"status"`
+			Workspace struct {
+				Schema    string `json:"schema"`
+				SandboxID string `json:"sandbox_id"`
+				Available bool   `json:"available"`
+			} `json:"workspace_binding"`
 		} `json:"instance"`
 	}
 	if e = c.call(ctx, "GET", "/api/practice-task/v2/task-instances/"+m.Task, nil, &envelope); e != nil {
@@ -143,6 +155,15 @@ func Chat(ctx context.Context, h *http.Client, origin, workspace string, input R
 	instance := envelope.Instance
 	if instance.ID != m.Task || !uuid.MatchString(instance.Action) {
 		return fail, errors.New("authorized TaskInstance context unavailable")
+	}
+	if input.SyncMain && strings.TrimSpace(input.Body) != "" {
+		b := instance.Workspace
+		if b.Schema != "practice-workspace-binding.v2" || !b.Available || !uuid.MatchString(b.SandboxID) {
+			return fail, errors.New("real Sandbox binding required for saved code")
+		}
+		if e = c.syncMain(ctx, workspace, b.SandboxID, input.Key); e != nil {
+			return fail, e
+		}
 	}
 	var binding struct {
 		ID        string `json:"id"`

@@ -145,3 +145,15 @@ Teacher uses server-owned task/step and assistance policy. Unsynced local code
 is not uploaded or treated as official Sandbox state. Real response generation
 requires the approved confidential AI Prompt provider; an unavailable provider
 must not be replaced with a fabricated answer. Dialog owns all history.
+
+Saved-code Teacher opt-in: `teacher-chat` stdin accepts `sync_main: true`.
+For nonempty questions the CLI uploads only the saved regular UTF-8 `main.go`
+(up to 16 KiB) to the Sandbox bound by the authenticated Runtime TaskInstance.
+It obtains the current fence, uses the question UUID as the Sandbox idempotency
+key, requires `file_updated`, and reads the bytes back before creating a Dialog
+message. No unsaved buffer, recursive directory, environment or private file is
+sent. Failure stops the question; refresh does not write code. Runtime's separate
+`IDE28_TEACHER_WORKSPACE_ENABLED` gate must be enabled by the stand owner.
+Teacher reads the latest committed generation at processing time, so concurrent
+saves can advance its code context. This is advisory assistance, not Submit or
+an official Sandbox validation result.

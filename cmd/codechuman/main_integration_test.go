@@ -83,7 +83,7 @@ func TestCheckoutRemoteCommandClonesPinnedGitWithoutPersistingBearer(t *testing.
 		t.Fatal(err)
 	}
 	t.Setenv("GIT_SSL_CAINFO", caPath)
-	t.Setenv("SSL_CERT_FILE", caPath)
+	t.Setenv("CODECHUMAN_CA_FILE", caPath)
 	t.Setenv("NO_PROXY", "127.0.0.1,localhost")
 	checkoutRoot := filepath.Join(root, "checkout")
 	args := []string{"checkout-remote", "--api-base", server.URL, "--task-instance", integrationTaskID, "--root", checkoutRoot, "--token-stdin"}
@@ -199,7 +199,7 @@ func TestOpenRemoteCommandFetchesAndCachesPinnedPublicLesson(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("GIT_SSL_CAINFO", caPath)
-	t.Setenv("SSL_CERT_FILE", caPath)
+	t.Setenv("CODECHUMAN_CA_FILE", caPath)
 	t.Setenv("NO_PROXY", "127.0.0.1,localhost")
 	checkoutRoot := filepath.Join(root, "workspace")
 	args := []string{"open-remote", "--api-base", server.URL, "--task-instance", integrationTaskID, "--root", checkoutRoot, "--token-stdin"}
