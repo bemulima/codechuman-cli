@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -26,8 +27,12 @@ func main() {
 }
 
 func run(args []string) error {
+	return runWithRemoteClient(args, nil)
+}
+
+func runWithRemoteClient(args []string, remoteClient *http.Client) error {
 	if len(args) == 0 {
-		return errors.New("expected command: doctor, checkout, checkout-remote, list, validate-js, validate-public-js or version")
+		return errors.New("expected command: doctor, checkout, checkout-remote, open-remote, list, validate-js, validate-public-js or version")
 	}
 	switch args[0] {
 	case "version":
@@ -96,7 +101,7 @@ func run(args []string) error {
 		token := strings.TrimSpace(string(input))
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		spec, err := checkout.ResolveRemote(ctx, nil, *origin, token, *instance)
+		spec, err := checkout.ResolveRemote(ctx, remoteClient, *origin, token, *instance)
 		if err != nil {
 			return err
 		}
@@ -105,6 +110,54 @@ func run(args []string) error {
 			return err
 		}
 		return writeJSON(result)
+	case "open-remote":
+		flags := flag.NewFlagSet("open-remote", flag.ContinueOnError)
+		origin := flags.String("api-base", "", "Codechuman HTTPS gateway origin")
+		instance := flags.String("task-instance", "", "existing student-owned TaskInstance UUID")
+		root := flags.String("root", "", "workspace root (default configurable)")
+		tokenStdin := flags.Bool("token-stdin", false, "read a temporary access token from stdin (never argv)")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *origin == "" || *instance == "" || !*tokenStdin {
+			return errors.New("--api-base, --task-instance and --token-stdin are required")
+		}
+		info, err := os.Stdin.Stat()
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeCharDevice != 0 {
+			return errors.New("token-stdin requires a pipe, not an interactive terminal")
+		}
+		input, err := io.ReadAll(io.LimitReader(os.Stdin, 8193))
+		if err != nil || len(input) > 8192 {
+			return errors.New("invalid token input")
+		}
+		token := strings.TrimSpace(string(input))
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		spec, err := checkout.ResolveRemote(ctx, remoteClient, *origin, token, *instance)
+		if err != nil {
+			return err
+		}
+		workspace, err := checkout.Checkout(ctx, *root, spec, checkout.GitCloner{BearerToken: token})
+		if err != nil {
+			return err
+		}
+		materials, err := checkout.ResolveRemoteMaterials(ctx, remoteClient, *origin, token, spec)
+		if err != nil {
+			return err
+		}
+		materialCache, err := checkout.CacheRemoteMaterials(workspace.Directory, spec, materials)
+		if err != nil {
+			return err
+		}
+		return writeJSON(map[string]any{
+			"directory":           workspace.Directory,
+			"checkout_reused":     workspace.Reused,
+			"materials_directory": materialCache.Directory,
+			"materials_reused":    materialCache.Reused,
+		})
 	case "list":
 		flags := flag.NewFlagSet("list", flag.ContinueOnError)
 		root := flags.String("root", "", "workspace root")

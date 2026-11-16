@@ -1,6 +1,6 @@
 # IDE28-08A — Pinned learner-visible materials (proposed contract)
 
-Status: **consumer source proposal, NOT integrated**. Parent: [IDE28-08 / business #52](https://github.com/bemulima/learning-platform-business/issues/52). No server route, feature flag, deployment, login flow or material cache write is introduced by this change.
+Status: **CLI consumer implemented on `epic/IDE-28`; server integration and acceptance pending**. Parent: [IDE-28 / business #52](https://github.com/bemulima/learning-platform-business/issues/52). The route stays source-only and default-off until the complete server vertical is reviewed; no production flag or login flow is enabled.
 
 ## Why a separate contract
 
@@ -56,9 +56,9 @@ Only this answer-free view is accepted by the CLI parser. Quiz grading still hap
 
 ## Consumer readiness and cache rule
 
-The unmounted `checkout.ResolveRemoteMaterials` uses HTTPS with redirect prevention and a bearer only in the HTTP header. It compares all bundle identities with the separately authorized Git checkout Spec, verifies each checksum and reuses the existing strict public material path/size limits; it returns validated in-memory files **without writing them**.
+`codechuman open-remote` uses HTTPS with redirect prevention and a bearer only in request headers. It compares all bundle identities with the separately authorized Git checkout Spec, verifies each checksum and the existing strict public material path/size limits, then atomically caches files under `.learning/materials/<lesson_revision>/`. The cache is bound to `.learning/manifest.json`; it verifies existing cache contents and refuses to replace modified data or symlinks. It does not change starter source files.
 
-A later IDE28-08D change must add a crash-safe, revision-fenced cache transaction under `.learning/` with the existing checkout manifest and `.git/info/exclude` rules. An existing checkout and student source file must never be overwritten by a material refresh. VS Code and Neovim already have local read-only material readers. No CLI command currently calls this parser: no partial data is advertised as fetched.
+A bounded native HTTPS fixture exercises `open-remote`, Git clone, material SHA validation, atomic cache reuse and preservation of student source edits. This fixture is not live Auth/RBAC or owner acceptance. A real authorized Gateway request remains part of the final vertical smoke. VS Code and Neovim read only the revision-scoped local package.
 
 ## Proposed targeted acceptance
 
@@ -68,4 +68,4 @@ A later IDE28-08D change must add a crash-safe, revision-fenced cache transactio
 - No token persisted, no AI generation, no Git push, no local Mastery.
 - Only one isolated owner-backed integration smoke after server slices IDE28-08B/C, without replaying IDE28-07 or starting full Playwright.
 
-**Current verification:** Go compiler is not available in this workspace (the `go` executable here is a board game). Go tests/build/gofmt are **NOT_RUN** until a suitable Go toolchain is provided. This is not a GREEN runtime release.
+**Current verification:** Go 1.24.4; `go test ./internal/checkout -run '^TestCacheRemoteMaterials' -count=1` PASS; `go test ./cmd/codechuman -run '^TestOpenRemoteCommandFetchesAndCachesPinnedPublicLesson$' -count=1 -v` PASS against an isolated local HTTPS/Git fixture. This does not exercise live Auth/RBAC, Gateway, Practice, Course, a foreign-student denial, or the final cross-service smoke.

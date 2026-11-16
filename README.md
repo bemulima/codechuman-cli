@@ -2,17 +2,20 @@
 
 Go-based shared local runtime for [Codechuman IDE #28](https://github.com/bemulima/learning-platform-business/issues/28).
 Intended for both VS Code and Neovim. **This is a partial client:** the P0
-owner-authenticated checkout and immutable Git-read backend are merged, but
-client sign-in, lesson material retrieval, and full IDE orchestration remain
-separate work.
+owner-authenticated checkout and immutable Git-read backend are available;
+`epic/IDE-28` adds the source path for authenticated public lesson retrieval
+and revision-scoped local caching. Native sign-in and full IDE orchestration
+remain separate work.
 
 ## Implemented
 
 - Versioned `codechuman.checkout.v1` manifest and public content pack.
 - HTTPS-only Git clone; no token in the URL, no automatic Git push.
 - Immutable lesson/task revision fence and non-destructive checkout reuse.
-- Locally cached `lesson.md`, `task.md`, examples and public tests under
-  `.learning/`, excluded from Git status and reserved from future Sandbox sync.
+- Public lesson material checksums and atomic revision-scoped cache under
+  `.learning/materials/<lesson_revision>/`; a changed cache is never replaced.
+- Local checkout metadata and materials are excluded from Git and remain outside
+  the existing Sandbox source-sync allowlist.
 - JS syntax check with the installed Node.js runtime, independent of AI credits.
 - Explicit opt-in for public JavaScript `*.test.js` checks, also AI-independent;
   no tests returns `NO_TESTS` rather than a misleading success.
@@ -27,6 +30,11 @@ go build -o codechuman ./cmd/codechuman
 # Use a short-lived Student access token supplied by the authenticated IDE
 # session over stdin, never as a command-line argument or embedded Git URL.
 # <secure-token-provider> | ./codechuman checkout-remote \
+#   --api-base https://YOUR-CODECHUMAN-HOST \
+#   --task-instance 00000000-0000-4000-8000-000000000028 --token-stdin
+# After the GUIDED materials route is available, this opens the same pinned
+# checkout and retrieves its public lesson pack using the same one-shot token.
+# <secure-token-provider> | ./codechuman open-remote \
 #   --api-base https://YOUR-CODECHUMAN-HOST \
 #   --task-instance 00000000-0000-4000-8000-000000000028 --token-stdin
 ./codechuman list
@@ -81,9 +89,12 @@ identities and unexpected descriptor fields fail closed. The Git transport is
 read-only and is owned by Practice Runtime, not Sandbox Git push.
 
 The remote descriptor contains **no lesson.md, examples, quiz or public tests**.
-Those materials require a separate authorized Course read, so
-`checkout-remote` currently creates the pinned starter and identity manifest
-only. Local validation of already available public source still works offline.
+`checkout-remote` creates the pinned starter and identity manifest only.
+`open-remote` additionally calls the separate TaskInstance-bound materials
+route, validates exact owner identities and every SHA-256, rejects private
+paths and quiz answers, then atomically installs the package at
+`.learning/materials/<lesson_revision>/`. The server route remains source-only
+and default-off until the IDE-28 vertical is integrated and accepted.
 
 The backend P0 flow passed isolated runtime acceptance before being merged;
 deployment/activation and a real CLI-command checkout against the full
@@ -95,7 +106,7 @@ Never put a real access token into shell history or a command literal.
 run as your OS user and can execute arbitrary JavaScript; they are not isolated
 by Docker or the platform Sandbox. They are never official graded evidence.
 
-**Not yet implemented:** live lesson/material fetching and native login,
+**Not yet implemented:** native login,
 WebSocket file sync and revision ACKs,
 official Practice Submit, Dialog/Teacher and AI provider execution. A local
 `PASS` never grants Mastery.
