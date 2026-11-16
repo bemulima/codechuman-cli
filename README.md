@@ -161,3 +161,7 @@ an official Sandbox validation result.
 ### Saved Go Sandbox checks (IDE28, opt-in stand)
 
 `codechuman check-solution --api-base https://trusted-gateway --workspace /task --request-stdin` reads a JSON request with token on stdin. It uploads only saved main.go through the existing fenced Sandbox API and runs the revision-bound public HTTP profile. JSON output distinguishes PASS, FAIL, ERROR, RUNNING and stale, with advisory:true. No token in arguments, no official Submit/checkpoint/progress and no local shell execution. Technical ERROR never means learner FAIL. Changes saved after execution require another check.
+
+### Explicit official Submit
+
+`submit-solution --api-base https://trusted-gateway --workspace /task --request-stdin` requires token, explicit scope MILESTONE/FINAL and UUID idempotency_key in stdin JSON. It verifies the owned TaskInstance, syncs saved main.go with the current fence, and invokes unchanged practice-task-submit.v2. New milestone comes only from the frozen current step. It returns a safe official receipt or uncertain:true with the exact original key/scope/milestone. Replay requires those original values and replay:true, skips source writes, and never creates a new key. Do not interpret transport ambiguity as success or change keys blindly. This command may freeze editing/change official progress; it is never called by chat or advisory checks.
