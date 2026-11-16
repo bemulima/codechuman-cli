@@ -165,3 +165,12 @@ an official Sandbox validation result.
 ### Explicit official Submit
 
 `submit-solution --api-base https://trusted-gateway --workspace /task --request-stdin` requires token, explicit scope MILESTONE/FINAL and UUID idempotency_key in stdin JSON. It verifies the owned TaskInstance, syncs saved main.go with the current fence, and invokes unchanged practice-task-submit.v2. New milestone comes only from the frozen current step. It returns a safe official receipt or uncertain:true with the exact original key/scope/milestone. Replay requires those original values and replay:true, skips source writes, and never creates a new key. Do not interpret transport ambiguity as success or change keys blindly. This command may freeze editing/change official progress; it is never called by chat or advisory checks.
+
+`sync-saved --api-base <HTTPS-origin> --workspace <task-directory> --request-stdin`
+uses the same owner/Sandbox file APIs without Git, AI, checks or progress. Input
+is private JSON over stdin: token, UUID idempotency_key, and either explicit
+`initialize:true` for manual upload, or `expected_fence_epoch` from a previous
+ACK. Automatic callers must never initialize/rebase implicitly. The result
+contains only task/Sandbox identity, acknowledged fence and saved-main digest.
+Missing/drifted fences and malformed ACKs halt the caller without changing local
+source. Only the saved regular UTF-8 main.go (up to16KiB) is uploaded.

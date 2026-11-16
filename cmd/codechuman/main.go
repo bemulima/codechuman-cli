@@ -39,6 +39,8 @@ func runWithRemoteClient(args []string, remoteClient *http.Client) error {
 		return errors.New("expected command: doctor, checkout, checkout-remote, open-remote, list, validate-js, validate-public-js or version")
 	}
 	switch args[0] {
+	case "sync-saved":
+		return runSyncSaved(args[1:], remoteClient)
 	case "submit-solution":
 		return runSubmit(args[1:], remoteClient)
 	case "check-solution":

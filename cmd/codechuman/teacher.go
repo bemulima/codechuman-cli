@@ -95,3 +95,31 @@ func runSubmit(args []string, h *http.Client) error {
 	}
 	return writeJSON(out)
 }
+
+func runSyncSaved(args []string, h *http.Client) error {
+	f := flag.NewFlagSet("sync-saved", flag.ContinueOnError)
+	origin := f.String("api-base", "", "HTTPS Gateway")
+	workspace := f.String("workspace", "", "owned checkout")
+	stdin := f.Bool("request-stdin", false, "ephemeral request via pipe")
+	if e := f.Parse(args); e != nil {
+		return e
+	}
+	if !*stdin || *workspace == "" {
+		return errors.New("--workspace and --request-stdin required")
+	}
+	raw, e := io.ReadAll(io.LimitReader(os.Stdin, 32769))
+	if e != nil || len(raw) > 32768 {
+		return errors.New("bounded sync input required")
+	}
+	var in teacher.SyncRequest
+	if json.Unmarshal(raw, &in) != nil {
+		return errors.New("invalid sync input")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, e := teacher.SyncSaved(ctx, h, *origin, *workspace, in)
+	if e != nil {
+		return e
+	}
+	return writeJSON(out)
+}
