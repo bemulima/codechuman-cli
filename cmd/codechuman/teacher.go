@@ -39,3 +39,31 @@ func runTeacher(args []string, h *http.Client) error {
 	}
 	return writeJSON(result)
 }
+
+func runCheck(args []string, h *http.Client) error {
+	f := flag.NewFlagSet("check-solution", flag.ContinueOnError)
+	origin := f.String("api-base", "", "HTTPS Gateway")
+	workspace := f.String("workspace", "", "owned checkout")
+	stdin := f.Bool("request-stdin", false, "read ephemeral Student token from stdin")
+	if e := f.Parse(args); e != nil {
+		return e
+	}
+	if !*stdin || *workspace == "" {
+		return errors.New("--workspace and --request-stdin required")
+	}
+	raw, e := io.ReadAll(io.LimitReader(os.Stdin, 32769))
+	if e != nil || len(raw) > 32768 {
+		return errors.New("invalid check request")
+	}
+	var input teacher.Request
+	if json.Unmarshal(raw, &input) != nil {
+		return errors.New("invalid check JSON")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	out, e := teacher.Check(ctx, h, *origin, *workspace, input)
+	if e != nil {
+		return e
+	}
+	return writeJSON(out)
+}

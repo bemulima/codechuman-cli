@@ -98,44 +98,16 @@ func NewKey() string {
 }
 func Chat(ctx context.Context, h *http.Client, origin, workspace string, input Request) (Result, error) {
 	fail := Result{}
-	u, e := url.Parse(origin)
-	if e != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
-		return fail, errors.New("Teacher requires an HTTPS origin")
-	}
-	if input.Token == "" || len(input.Token) > 8192 || strings.ContainsAny(input.Token, " \t\n\r\x00") {
-		return fail, errors.New("invalid Student token")
-	}
 	if len(input.Body) > 12000 {
 		return fail, errors.New("Teacher message too long")
 	}
 	if input.Body != "" && !uuid.MatchString(input.Key) {
 		return fail, errors.New("message idempotency key required")
 	}
-	p := filepath.Join(workspace, ".learning", "manifest.json")
-	st, e := os.Lstat(p)
-	if e != nil || !st.Mode().IsRegular() || st.Size() > 16384 {
-		return fail, errors.New("safe checkout manifest required")
-	}
-	raw, e := os.ReadFile(p)
+	c, taskID, e := taskClient(h, origin, workspace, input.Token)
 	if e != nil {
-		return fail, errors.New("checkout manifest unreadable")
+		return fail, e
 	}
-	var m struct {
-		Schema string `json:"schema"`
-		Task   string `json:"task_instance_id"`
-	}
-	if json.Unmarshal(raw, &m) != nil || m.Schema != "codechuman.checkout.v1" || !uuid.MatchString(m.Task) {
-		return fail, errors.New("invalid checkout identity")
-	}
-	if h == nil {
-		h = &http.Client{Timeout: 12 * time.Second}
-	}
-	hc := *h
-	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	if hc.Timeout == 0 {
-		hc.Timeout = 12 * time.Second
-	}
-	c := client{&hc, strings.TrimRight(origin, "/"), input.Token}
 	// Runtime rechecks actual Student ownership. No identity/action comes from local config.
 	var envelope struct {
 		Instance struct {
@@ -149,11 +121,11 @@ func Chat(ctx context.Context, h *http.Client, origin, workspace string, input R
 			} `json:"workspace_binding"`
 		} `json:"instance"`
 	}
-	if e = c.call(ctx, "GET", "/api/practice-task/v2/task-instances/"+m.Task, nil, &envelope); e != nil {
+	if e = c.call(ctx, "GET", "/api/practice-task/v2/task-instances/"+taskID, nil, &envelope); e != nil {
 		return fail, e
 	}
 	instance := envelope.Instance
-	if instance.ID != m.Task || !uuid.MatchString(instance.Action) {
+	if instance.ID != taskID || !uuid.MatchString(instance.Action) {
 		return fail, errors.New("authorized TaskInstance context unavailable")
 	}
 	if input.SyncMain && strings.TrimSpace(input.Body) != "" {
@@ -170,13 +142,13 @@ func Chat(ctx context.Context, h *http.Client, origin, workspace string, input R
 		Context   string `json:"context_type"`
 		ContextID string `json:"context_id"`
 	}
-	if e = c.call(ctx, "PUT", "/api/teacher/v1/teacher-dialog/ensure", map[string]string{"context_type": "practice_task", "context_id": m.Task}, &binding); e != nil {
+	if e = c.call(ctx, "PUT", "/api/teacher/v1/teacher-dialog/ensure", map[string]string{"context_type": "practice_task", "context_id": taskID}, &binding); e != nil {
 		return fail, e
 	}
-	if !uuid.MatchString(binding.ID) || binding.Context != "practice_task" || binding.ContextID != m.Task {
+	if !uuid.MatchString(binding.ID) || binding.Context != "practice_task" || binding.ContextID != taskID {
 		return fail, errors.New("Teacher context identity mismatch")
 	}
-	result := Result{DialogID: binding.ID, TaskID: m.Task}
+	result := Result{DialogID: binding.ID, TaskID: taskID}
 	source := ""
 	if strings.TrimSpace(input.Body) != "" {
 		var msg Message
@@ -212,4 +184,39 @@ func Chat(ctx context.Context, h *http.Client, origin, workspace string, input R
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+func taskClient(h *http.Client, origin, workspace, token string) (client, string, error) {
+	u, e := url.Parse(origin)
+	if e != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return client{}, "", errors.New("Teacher requires an HTTPS origin")
+	}
+	if token == "" || len(token) > 8192 || strings.ContainsAny(token, " \t\n\r\x00") {
+		return client{}, "", errors.New("invalid Student token")
+	}
+	p := filepath.Join(workspace, ".learning", "manifest.json")
+	st, e := os.Lstat(p)
+	if e != nil || !st.Mode().IsRegular() || st.Size() > 16384 {
+		return client{}, "", errors.New("safe checkout manifest required")
+	}
+	raw, e := os.ReadFile(p)
+	if e != nil {
+		return client{}, "", errors.New("checkout manifest unreadable")
+	}
+	var m struct {
+		Schema string `json:"schema"`
+		Task   string `json:"task_instance_id"`
+	}
+	if json.Unmarshal(raw, &m) != nil || m.Schema != "codechuman.checkout.v1" || !uuid.MatchString(m.Task) {
+		return client{}, "", errors.New("invalid checkout identity")
+	}
+	if h == nil {
+		h = &http.Client{Timeout: 12 * time.Second}
+	}
+	hc := *h
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	if hc.Timeout == 0 {
+		hc.Timeout = 12 * time.Second
+	}
+	return client{&hc, strings.TrimRight(origin, "/"), token}, m.Task, nil
 }

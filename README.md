@@ -157,3 +157,7 @@ sent. Failure stops the question; refresh does not write code. Runtime's separat
 Teacher reads the latest committed generation at processing time, so concurrent
 saves can advance its code context. This is advisory assistance, not Submit or
 an official Sandbox validation result.
+
+### Saved Go Sandbox checks (IDE28, opt-in stand)
+
+`codechuman check-solution --api-base https://trusted-gateway --workspace /task --request-stdin` reads a JSON request with token on stdin. It uploads only saved main.go through the existing fenced Sandbox API and runs the revision-bound public HTTP profile. JSON output distinguishes PASS, FAIL, ERROR, RUNNING and stale, with advisory:true. No token in arguments, no official Submit/checkpoint/progress and no local shell execution. Technical ERROR never means learner FAIL. Changes saved after execution require another check.

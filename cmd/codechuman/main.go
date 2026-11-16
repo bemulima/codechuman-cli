@@ -39,6 +39,8 @@ func runWithRemoteClient(args []string, remoteClient *http.Client) error {
 		return errors.New("expected command: doctor, checkout, checkout-remote, open-remote, list, validate-js, validate-public-js or version")
 	}
 	switch args[0] {
+	case "check-solution":
+		return runCheck(args[1:], remoteClient)
 	case "teacher-chat":
 		return runTeacher(args[1:], remoteClient)
 	case "version":
