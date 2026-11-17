@@ -1,0 +1,188 @@
+package checkout
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"mime"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+	"unicode/utf8"
+)
+
+const (
+	remoteMaterialsSchema  = "codechuman.ide-materials.v1"
+	remoteMaterialsMaxWire = 6 << 20
+)
+
+// remoteMaterialsBundle is a proposed additive owner response, not a replacement
+// for the currently deployed codechuman.checkout.v1 Git starter descriptor.
+// Course and Practice must construct a public-only, immutable projection.
+type remoteMaterialsBundle struct {
+	Schema         string               `json:"schema"`
+	TaskInstanceID string               `json:"task_instance_id"`
+	CourseID       string               `json:"course_id"`
+	LessonID       string               `json:"lesson_id"`
+	LessonRevision string               `json:"lesson_revision"`
+	Files          []remoteMaterialFile `json:"files"`
+}
+
+type remoteMaterialFile struct {
+	Path   string `json:"path"`
+	Body   string `json:"body"`
+	SHA256 string `json:"sha256"`
+}
+
+// ResolveRemoteMaterials parses only authenticated, owner-pinned public files.
+// The proposed route is not yet mounted by Gateway/Practice: callers must not
+// enable a material fetch until those owners approve and implement it.
+// It does not write the checkout, change Git starter files, or persist a token.
+func ResolveRemoteMaterials(ctx context.Context, client *http.Client, apiBase, bearer string, expected Spec) ([]Material, error) {
+	if ctx == nil {
+		return nil, errors.New("materials request context is required")
+	}
+	if err := expected.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid pinned checkout: %w", err)
+	}
+	if !canonicalTaskID.MatchString(expected.TaskInstanceID) ||
+		!canonicalTaskID.MatchString(expected.CourseID) ||
+		!canonicalTaskID.MatchString(expected.LessonID) ||
+		!canonicalTaskID.MatchString(expected.LessonRevision) {
+		return nil, errors.New("materials require canonical pinned identities")
+	}
+	base, err := url.Parse(apiBase)
+	if err != nil || base.Scheme != "https" || base.Hostname() == "" ||
+		base.User != nil || base.RawQuery != "" || base.Fragment != "" ||
+		base.Opaque != "" || (base.Path != "" && base.Path != "/") {
+		return nil, errors.New("materials API base must be an HTTPS origin")
+	}
+	origin := base.Scheme + "://" + base.Host
+	if expected.CloneURL != origin+gitExportRoutePrefix+expected.TaskInstanceID+".git" {
+		return nil, errors.New("materials origin differs from pinned Git checkout")
+	}
+	if len(bearer) == 0 || len(bearer) > 8192 ||
+		strings.TrimSpace(bearer) != bearer ||
+		strings.ContainsAny(bearer, "\r\n\x00\t ") {
+		return nil, errors.New("invalid materials bearer")
+	}
+
+	endpoint := origin + checkoutRoute + "/" + expected.TaskInstanceID + "/materials"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	req.Header.Set("Accept", "application/json")
+	if client == nil {
+		client = &http.Client{Timeout: 12 * time.Second}
+	}
+	safeClient := *client
+	safeClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	if safeClient.Timeout == 0 {
+		safeClient.Timeout = 12 * time.Second
+	}
+	response, err := safeClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("materials owner request failed: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("materials owner returned HTTP %d", response.StatusCode)
+	}
+	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		return nil, errors.New("materials owner returned a non-JSON response")
+	}
+	if !strings.Contains(strings.ToLower(response.Header.Get("Cache-Control")), "no-store") {
+		return nil, errors.New("materials response must disable HTTP caching")
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, remoteMaterialsMaxWire+1))
+	if err != nil || len(body) == 0 || len(body) > remoteMaterialsMaxWire || !utf8.Valid(body) {
+		return nil, errors.New("materials response is invalid or oversized")
+	}
+	var pack remoteMaterialsBundle
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&pack); err != nil {
+		return nil, fmt.Errorf("invalid materials payload: %w", err)
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return nil, errors.New("materials payload must be one JSON object")
+	}
+	if pack.Schema != remoteMaterialsSchema || pack.TaskInstanceID != expected.TaskInstanceID ||
+		pack.CourseID != expected.CourseID || pack.LessonID != expected.LessonID ||
+		pack.LessonRevision != expected.LessonRevision {
+		return nil, errors.New("materials identity differs from pinned checkout")
+	}
+	if len(pack.Files) == 0 || len(pack.Files) > 100 {
+		return nil, errors.New("materials pack file count is invalid")
+	}
+	materials := make([]Material, 0, len(pack.Files))
+	hasLesson := false
+	for _, file := range pack.Files {
+		sum := sha256.Sum256([]byte(file.Body))
+		if file.SHA256 != fmt.Sprintf("sha256:%x", sum) {
+			return nil, errors.New("materials file checksum mismatch")
+		}
+		if file.Path == "quiz.json" {
+			if err := validatePublicQuiz(file.Body); err != nil {
+				return nil, err
+			}
+		}
+		if file.Path == "lesson.md" {
+			hasLesson = true
+		}
+		materials = append(materials, Material{Path: file.Path, Body: file.Body})
+	}
+	if !hasLesson {
+		return nil, errors.New("materials pack requires a pinned lesson")
+	}
+	// Reuse the established path, duplicate, per-file and aggregate limits.
+	candidate := expected
+	candidate.Materials = materials
+	if err := candidate.Validate(); err != nil {
+		return nil, fmt.Errorf("unsafe materials pack: %w", err)
+	}
+	return materials, nil
+}
+
+// validatePublicQuiz only accepts an answer-free view DTO. Never deserialize
+// raw Course TaskTestVariant or QuizQuestion objects with grading keys.
+func validatePublicQuiz(body string) error {
+	var quiz struct {
+		Schema    string `json:"schema"`
+		Title     string `json:"title"`
+		Questions []struct {
+			Key     string `json:"key"`
+			Prompt  string `json:"prompt"`
+			Choices []struct {
+				Key  string `json:"key"`
+				Text string `json:"text"`
+			} `json:"choices"`
+		} `json:"questions"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&quiz); err != nil {
+		return errors.New("quiz is not a public answer-free view")
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) ||
+		quiz.Schema != "codechuman.quiz-view.v1" || len(quiz.Questions) > 100 {
+		return errors.New("quiz is not a public answer-free view")
+	}
+	for _, question := range quiz.Questions {
+		if question.Key == "" || question.Prompt == "" ||
+			len(question.Choices) < 2 || len(question.Choices) > 10 {
+			return errors.New("quiz contains an invalid public question")
+		}
+	}
+	return nil
+}

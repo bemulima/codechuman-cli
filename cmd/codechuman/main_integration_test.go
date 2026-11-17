@@ -1,8 +1,10 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -81,7 +83,7 @@ func TestCheckoutRemoteCommandClonesPinnedGitWithoutPersistingBearer(t *testing.
 		t.Fatal(err)
 	}
 	t.Setenv("GIT_SSL_CAINFO", caPath)
-	t.Setenv("SSL_CERT_FILE", caPath)
+	t.Setenv("CODECHUMAN_CA_FILE", caPath)
 	t.Setenv("NO_PROXY", "127.0.0.1,localhost")
 	checkoutRoot := filepath.Join(root, "checkout")
 	args := []string{"checkout-remote", "--api-base", server.URL, "--task-instance", integrationTaskID, "--root", checkoutRoot, "--token-stdin"}
@@ -117,6 +119,123 @@ func TestCheckoutRemoteCommandClonesPinnedGitWithoutPersistingBearer(t *testing.
 		content, err := os.ReadFile(name)
 		if err != nil || strings.Contains(string(content), bearer) {
 			t.Fatalf("credential leaked or manifest unavailable in %s: %v", name, err)
+		}
+	}
+}
+
+func TestOpenRemoteCommandFetchesAndCachesPinnedPublicLesson(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("native Git is unavailable")
+	}
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, root, "init", source)
+	gitCommand(t, source, "config", "user.email", "ide28@example.invalid")
+	gitCommand(t, source, "config", "user.name", "IDE28 Fixture")
+	if err := os.WriteFile(filepath.Join(source, "app.js"), []byte("module.exports.answer = 42;\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, source, "add", "app.js")
+	gitCommand(t, source, "commit", "-m", "pin starter")
+	bare := filepath.Join(root, "starter.git")
+	gitCommand(t, root, "clone", "--bare", source, bare)
+	gitCommand(t, bare, "update-server-info")
+
+	const bearer = "fixture.student.token.not-persisted"
+	const exportPrefix = "/api/v1/ide/git/exports/" + integrationTaskID + ".git/"
+	lesson := "# Authorized Go lesson\n"
+	digest := sha256.Sum256([]byte(lesson))
+	var checkoutRequests, materialsRequests, gitRequests atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+bearer {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/ide/checkouts":
+			checkoutRequests.Add(1)
+			var request struct {
+				TaskInstanceID string `json:"task_instance_id"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.TaskInstanceID != integrationTaskID {
+				t.Errorf("unexpected descriptor request: %+v, %v", request, err)
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "private, no-store")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"schema": "codechuman.checkout.v1", "course_id": "88888888-8888-4888-8888-888888888888",
+				"course_slug": "go-basics", "lesson_id": "99999999-9999-4999-8999-999999999999",
+				"lesson_number": 3, "lesson_revision": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+				"task_instance_id": integrationTaskID, "sandbox_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+				"git_url": "/api/v1/ide/git/exports/" + integrationTaskID + ".git",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/ide/checkouts/"+integrationTaskID+"/materials":
+			materialsRequests.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "private, no-store")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"schema": "codechuman.ide-materials.v1", "task_instance_id": integrationTaskID,
+				"course_id":       "88888888-8888-4888-8888-888888888888",
+				"lesson_id":       "99999999-9999-4999-8999-999999999999",
+				"lesson_revision": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+				"files":           []map[string]string{{"path": "lesson.md", "body": lesson, "sha256": fmt.Sprintf("sha256:%x", digest)}},
+			})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, exportPrefix):
+			gitRequests.Add(1)
+			http.StripPrefix(exportPrefix, http.FileServer(http.Dir(bare))).ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	certificate := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	caPath := filepath.Join(root, "ca.pem")
+	if err := os.WriteFile(caPath, certificate, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_SSL_CAINFO", caPath)
+	t.Setenv("CODECHUMAN_CA_FILE", caPath)
+	t.Setenv("NO_PROXY", "127.0.0.1,localhost")
+	checkoutRoot := filepath.Join(root, "workspace")
+	args := []string{"open-remote", "--api-base", server.URL, "--task-instance", integrationTaskID, "--root", checkoutRoot, "--token-stdin"}
+	for runNumber := 0; runNumber < 2; runNumber++ {
+		withTokenStdin(t, bearer, func() {
+			if err := runWithRemoteClient(args, server.Client()); err != nil {
+				t.Fatalf("open-remote run %d: %v", runNumber, err)
+			}
+		})
+		lessonPath := filepath.Join(checkoutRoot, "go-basics", "03", ".learning", "materials", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "lesson.md")
+		content, err := os.ReadFile(lessonPath)
+		if err != nil || string(content) != lesson {
+			t.Fatalf("authorized immutable lesson unavailable: %q, %v", content, err)
+		}
+		appPath := filepath.Join(checkoutRoot, "go-basics", "03", "app.js")
+		if runNumber == 0 {
+			if err := os.WriteFile(appPath, []byte("// student's unfinished work\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		app, err := os.ReadFile(appPath)
+		if err != nil || runNumber == 1 && string(app) != "// student's unfinished work\n" {
+			t.Fatalf("local source was lost: %q, %v", app, err)
+		}
+	}
+	if checkoutRequests.Load() != 2 || materialsRequests.Load() != 2 || gitRequests.Load() == 0 {
+		t.Fatalf("unexpected owner calls: checkout=%d materials=%d Git=%d", checkoutRequests.Load(), materialsRequests.Load(), gitRequests.Load())
+	}
+	for _, name := range []string{
+		filepath.Join(checkoutRoot, "go-basics", "03", ".git", "config"),
+		filepath.Join(checkoutRoot, "go-basics", "03", ".learning", "manifest.json"),
+		filepath.Join(checkoutRoot, "go-basics", "03", ".learning", "materials", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "manifest.json"),
+	} {
+		content, err := os.ReadFile(name)
+		if err != nil || strings.Contains(string(content), bearer) {
+			t.Fatalf("credential leaked or local manifest unavailable in %s: %v", name, err)
 		}
 	}
 }

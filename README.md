@@ -2,17 +2,20 @@
 
 Go-based shared local runtime for [Codechuman IDE #28](https://github.com/bemulima/learning-platform-business/issues/28).
 Intended for both VS Code and Neovim. **This is a partial client:** the P0
-owner-authenticated checkout and immutable Git-read backend are merged, but
-client sign-in, lesson material retrieval, and full IDE orchestration remain
-separate work.
+owner-authenticated checkout and immutable Git-read backend are available;
+`epic/IDE-28` adds the source path for authenticated public lesson retrieval
+and revision-scoped local caching. Native sign-in and full IDE orchestration
+remain separate work.
 
 ## Implemented
 
 - Versioned `codechuman.checkout.v1` manifest and public content pack.
 - HTTPS-only Git clone; no token in the URL, no automatic Git push.
 - Immutable lesson/task revision fence and non-destructive checkout reuse.
-- Locally cached `lesson.md`, `task.md`, examples and public tests under
-  `.learning/`, excluded from Git status and reserved from future Sandbox sync.
+- Public lesson material checksums and atomic revision-scoped cache under
+  `.learning/materials/<lesson_revision>/`; a changed cache is never replaced.
+- Local checkout metadata and materials are excluded from Git and remain outside
+  the existing Sandbox source-sync allowlist.
 - JS syntax check with the installed Node.js runtime, independent of AI credits.
 - Explicit opt-in for public JavaScript `*.test.js` checks, also AI-independent;
   no tests returns `NO_TESTS` rather than a misleading success.
@@ -27,6 +30,11 @@ go build -o codechuman ./cmd/codechuman
 # Use a short-lived Student access token supplied by the authenticated IDE
 # session over stdin, never as a command-line argument or embedded Git URL.
 # <secure-token-provider> | ./codechuman checkout-remote \
+#   --api-base https://YOUR-CODECHUMAN-HOST \
+#   --task-instance 00000000-0000-4000-8000-000000000028 --token-stdin
+# After the GUIDED materials route is available, this opens the same pinned
+# checkout and retrieves its public lesson pack using the same one-shot token.
+# <secure-token-provider> | ./codechuman open-remote \
 #   --api-base https://YOUR-CODECHUMAN-HOST \
 #   --task-instance 00000000-0000-4000-8000-000000000028 --token-stdin
 ./codechuman list
@@ -81,9 +89,12 @@ identities and unexpected descriptor fields fail closed. The Git transport is
 read-only and is owned by Practice Runtime, not Sandbox Git push.
 
 The remote descriptor contains **no lesson.md, examples, quiz or public tests**.
-Those materials require a separate authorized Course read, so
-`checkout-remote` currently creates the pinned starter and identity manifest
-only. Local validation of already available public source still works offline.
+`checkout-remote` creates the pinned starter and identity manifest only.
+`open-remote` additionally calls the separate TaskInstance-bound materials
+route, validates exact owner identities and every SHA-256, rejects private
+paths and quiz answers, then atomically installs the package at
+`.learning/materials/<lesson_revision>/`. The server route remains source-only
+and default-off until the IDE-28 vertical is integrated and accepted.
 
 The backend P0 flow passed isolated runtime acceptance before being merged;
 deployment/activation and a real CLI-command checkout against the full
@@ -95,7 +106,7 @@ Never put a real access token into shell history or a command literal.
 run as your OS user and can execute arbitrary JavaScript; they are not isolated
 by Docker or the platform Sandbox. They are never official graded evidence.
 
-**Not yet implemented:** live lesson/material fetching and native login,
+**Not yet implemented:** native login,
 WebSocket file sync and revision ACKs,
 official Practice Submit, Dialog/Teacher and AI provider execution. A local
 `PASS` never grants Mastery.
@@ -105,3 +116,61 @@ No open-source license has been selected yet for this public repository.
 The [server integration map](docs/server-integration-map.md) identifies existing
 Sandbox/Practice/Teacher endpoints to reuse and the smallest missing owner
 contracts. It also records the current Teacher code-context gap.
+
+### Process-local private CA (including native macOS)
+
+For an isolated test Gateway, set `CODECHUMAN_CA_FILE` to an operator-provided
+PEM CA bundle. CLI adds that bundle to the process's system roots; hostname and
+certificate verification remain mandatory. Invalid bundles fail closed. Set
+`GIT_SSL_CAINFO` to the same PEM path for native Git. Neither setting modifies
+the macOS trust store. Configure these only in your own launcher/environment,
+never from a cloned lesson or an untrusted project.
+
+### Task-scoped Teacher chat (IDE28)
+
+`teacher-chat --api-base https://YOUR-GATEWAY --workspace /path/to/checkout
+--request-stdin` reads a bounded JSON request from stdin with `token`, optional
+`body`, and `idempotency_key` (UUID required when sending). Never place the token
+or private message text in argv. The client first reads the actual Student-owned
+Runtime TaskInstance, derives its LearningAction from that owner response,
+ensures the `practice_task` Teacher conversation, and reads/posts through
+canonical Dialog. It does not save credentials or a duplicate transcript.
+
+The result contains `dialog_id`, `task_instance_id`, `messages`, and `pending`.
+A pending reply must be refreshed, not blindly resent. Reusing the same message
+idempotency key is required after an ambiguous POST. HTTP errors never include
+response bodies or the token. Redirects are forbidden and bodies are bounded.
+
+Teacher uses server-owned task/step and assistance policy. Unsynced local code
+is not uploaded or treated as official Sandbox state. Real response generation
+requires the approved confidential AI Prompt provider; an unavailable provider
+must not be replaced with a fabricated answer. Dialog owns all history.
+
+Saved-code Teacher opt-in: `teacher-chat` stdin accepts `sync_main: true`.
+For nonempty questions the CLI uploads only the saved regular UTF-8 `main.go`
+(up to 16 KiB) to the Sandbox bound by the authenticated Runtime TaskInstance.
+It obtains the current fence, uses the question UUID as the Sandbox idempotency
+key, requires `file_updated`, and reads the bytes back before creating a Dialog
+message. No unsaved buffer, recursive directory, environment or private file is
+sent. Failure stops the question; refresh does not write code. Runtime's separate
+`IDE28_TEACHER_WORKSPACE_ENABLED` gate must be enabled by the stand owner.
+Teacher reads the latest committed generation at processing time, so concurrent
+saves can advance its code context. This is advisory assistance, not Submit or
+an official Sandbox validation result.
+
+### Saved Go Sandbox checks (IDE28, opt-in stand)
+
+`codechuman check-solution --api-base https://trusted-gateway --workspace /task --request-stdin` reads a JSON request with token on stdin. It uploads only saved main.go through the existing fenced Sandbox API and runs the revision-bound public HTTP profile. JSON output distinguishes PASS, FAIL, ERROR, RUNNING and stale, with advisory:true. No token in arguments, no official Submit/checkpoint/progress and no local shell execution. Technical ERROR never means learner FAIL. Changes saved after execution require another check.
+
+### Explicit official Submit
+
+`submit-solution --api-base https://trusted-gateway --workspace /task --request-stdin` requires token, explicit scope MILESTONE/FINAL and UUID idempotency_key in stdin JSON. It verifies the owned TaskInstance, syncs saved main.go with the current fence, and invokes unchanged practice-task-submit.v2. New milestone comes only from the frozen current step. It returns a safe official receipt or uncertain:true with the exact original key/scope/milestone. Replay requires those original values and replay:true, skips source writes, and never creates a new key. Do not interpret transport ambiguity as success or change keys blindly. This command may freeze editing/change official progress; it is never called by chat or advisory checks.
+
+`sync-saved --api-base <HTTPS-origin> --workspace <task-directory> --request-stdin`
+uses the same owner/Sandbox file APIs without Git, AI, checks or progress. Input
+is private JSON over stdin: token, UUID idempotency_key, and either explicit
+`initialize:true` for manual upload, or `expected_fence_epoch` from a previous
+ACK. Automatic callers must never initialize/rebase implicitly. The result
+contains only task/Sandbox identity, acknowledged fence and saved-main digest.
+Missing/drifted fences and malformed ACKs halt the caller without changing local
+source. Only the saved regular UTF-8 main.go (up to16KiB) is uploaded.
